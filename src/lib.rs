@@ -1,3 +1,39 @@
+//! OpenTelemetry Exporter for Honeycomb (Unofficial)
+//!
+//! This crate implements an [OpenTelemetry Span Exporter](https://github.com/open-telemetry/opentelemetry-specification/blob/master/specification/trace/sdk.md#span-exporter)
+//! for [Honeycomb](https://honeycomb.io) that plugs into the [`opentelemetry`] crate.
+//!
+//! # Getting Started
+//!
+//! Please see the [`opentelemetry`] documentation for general OpenTelemetry usage. The example
+//! below illustrates how the Honeycomb exporter can be used.
+//!
+//! ### Example
+//! ```rust,no_run
+//! use opentelemetry::trace::Tracer;
+//! use opentelemetry_honeycomb::HoneycombApiKey;
+//!
+//! fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+//!     // Create a new instrumentation pipeline.
+//!     //
+//!     // NOTE: uninstalling the tracer happens when the _uninstall variable is dropped. Assigning
+//!     // it to _ will immediately drop it and uninstall the tracer!
+//!     let (tracer, _uninstall) = opentelemetry_honeycomb::new_pipeline(
+//!         HoneycombApiKey::new(std::env::var("HONEYCOMB_API_KEY").unwrap_or_else(|err| {
+//!             panic!("Missing or invalid environment variable `HONEYCOMB_API_KEY`: {}", err)
+//!         })),
+//!         std::env::var("HONEYCOMB_DATASET").unwrap_or_else(|err| {
+//!             panic!("Missing or invalid environment variable `HONEYCOMB_DATASET`: {}", err)
+//!       }),
+//!     ).install();
+//!
+//!     tracer.in_span("doing_work", |cx| {
+//!         // Traced app logic here...
+//!     });
+//!
+//!     Ok(())
+//! }
+//! ```
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use derivative::Derivative;

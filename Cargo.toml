@@ -2,6 +2,9 @@
 name = "opentelemetry-honeycomb"
 version = "0.1.0"
 authors = ["David A. Ramos <ramos@cs.stanford.edu>"]
+repository = "https://github.com/ramosbugs/opentelemetry-honeycomb-rs"
+description = "Unofficial OpenTelemetry Exporter for Honeycomb"
+license = "MIT"
 edition = "2018"
 
 [dependencies]
