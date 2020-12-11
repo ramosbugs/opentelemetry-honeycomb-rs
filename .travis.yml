@@ -1,0 +1,26 @@
+language: rust
+rust:
+  - 1.46.0
+  - stable
+  - beta
+  - nightly
+sudo: false
+#cache: cargo
+before_script:
+  - cargo install --force cargo-when
+  - |
+    if [ "$TRAVIS_RUST_VERSION" == "stable" ]; then
+      rustup component add clippy
+      rustup component add rustfmt
+      cargo install --force cargo-audit
+    fi
+script:
+  - cargo test --tests --examples
+  - cargo test --doc
+  - cargo test --all-features
+  - cargo when --equals TRAVIS_RUST_VERSION=stable fmt --all -- --check
+  - cargo when --equals TRAVIS_RUST_VERSION=stable clippy --all --all-features -- --deny warnings
+  - cargo when --equals TRAVIS_RUST_VERSION=stable audit
+notifications:
+  email:
+    on_success: never
