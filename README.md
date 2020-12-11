@@ -12,6 +12,7 @@
 ```rust
 use opentelemetry::trace::Tracer;
 use opentelemetry_honeycomb::HoneycombApiKey;
+
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
     // Create a new instrumentation pipeline.
     //
