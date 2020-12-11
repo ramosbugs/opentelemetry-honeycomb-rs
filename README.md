@@ -26,9 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         std::env::var("HONEYCOMB_DATASET")
             .expect("Missing or invalid environment variable HONEYCOMB_DATASET"),
     ).install();
+
     tracer.in_span("doing_work", |cx| {
         // Traced app logic here...
     });
+
     Ok(())
 }
 ```
