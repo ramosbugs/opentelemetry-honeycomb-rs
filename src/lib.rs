@@ -34,13 +34,14 @@
 //!     Ok(())
 //! }
 //! ```
+use async_std::sync::RwLock;
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use derivative::Derivative;
 use hazy::OpaqueDebug;
 use libhoney::transmission::Transmission;
-use libhoney::{Client, Event, FieldHolder, Sender, Value};
-use log::{debug, error, warn};
+use libhoney::{Client, Event, FieldHolder, Value};
+use log::{debug, error, trace, warn};
 use opentelemetry::exporter::trace::{ExportResult, SpanData, SpanExporter};
 use opentelemetry::exporter::ExportError;
 use opentelemetry::global::TracerProviderGuard;
@@ -49,7 +50,7 @@ use opentelemetry::trace::{SpanId, StatusCode, TraceError, TraceId, TracerProvid
 use opentelemetry::{Array, KeyValue};
 use thiserror::Error;
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Produced by libhoney:
@@ -126,17 +127,25 @@ impl HoneycombPipelineBuilder {
     }
 
     /// Install the Honeycomb exporter pipeline with the recommended defaults.
-    pub fn install(mut self) -> (opentelemetry::sdk::trace::Tracer, Uninstall) {
-        let client = Arc::new(RwLock::new(libhoney::init(libhoney::Config {
+    pub fn install(
+        mut self,
+    ) -> (
+        HoneycombFlusher,
+        opentelemetry::sdk::trace::Tracer,
+        Uninstall,
+    ) {
+        let client = Arc::new(RwLock::new(Some(libhoney::init(libhoney::Config {
             options: libhoney::client::Options {
                 api_key: self.api_key.into_inner(),
                 dataset: self.dataset,
                 ..Default::default()
             },
             transmission_options: self.transmission_options,
-        })));
+        }))));
 
-        let exporter = HoneycombSpanExporter { client };
+        let exporter = HoneycombSpanExporter {
+            client: client.clone(),
+        };
 
         // Libhoney implements its own batching, so we just use the simple exporter here instead of
         // double-batching (which would require double-flushing, etc.).
@@ -152,7 +161,28 @@ impl HoneycombPipelineBuilder {
         );
         let provider_guard = opentelemetry::global::set_tracer_provider(provider);
 
-        (tracer, Uninstall(provider_guard))
+        (
+            HoneycombFlusher { client },
+            tracer,
+            Uninstall(provider_guard),
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct HoneycombFlusher {
+    client: Arc<RwLock<Option<Client<Transmission>>>>,
+}
+impl HoneycombFlusher {
+    pub async fn flush(&self) -> Result<(), HoneycombExporterError> {
+        log::debug!("Flushing Honeycomb client");
+        let mut guard = self.client.write().await;
+        guard
+            .as_mut()
+            .ok_or(HoneycombExporterError::Shutdown)?
+            .flush()
+            .await
+            .map_err(HoneycombExporterError::Honeycomb)
     }
 }
 
@@ -160,6 +190,8 @@ impl HoneycombPipelineBuilder {
 pub enum HoneycombExporterError {
     #[error("Honeycomb error")]
     Honeycomb(#[source] HoneycombError),
+    #[error("exporter is already shut down")]
+    Shutdown,
 }
 impl ExportError for HoneycombExporterError {
     fn exporter_name(&self) -> &'static str {
@@ -212,7 +244,7 @@ fn otel_value_to_serde_json(value: opentelemetry::Value) -> Value {
 #[derivative(Debug)]
 struct HoneycombSpanExporter {
     #[derivative(Debug = "ignore")]
-    client: Arc<RwLock<Client<Transmission>>>,
+    client: Arc<RwLock<Option<Client<Transmission>>>>,
 }
 impl HoneycombSpanExporter {
     fn new_trace_event<I>(
@@ -261,49 +293,48 @@ impl HoneycombSpanExporter {
 impl SpanExporter for HoneycombSpanExporter {
     async fn export(&mut self, batch: Vec<SpanData>) -> ExportResult {
         debug!("Exporting batch of {} spans", batch.len());
-        let mut client = self
-            .client
-            .write()
-            .expect("Honeycomb client lock is poisoned");
         for span in batch {
-            {
-                let mut event = Self::new_trace_event(
-                    &client,
-                    span.start_time,
-                    span.span_context.trace_id(),
-                    span.parent_span_id,
-                    span.attributes,
-                    &span.resource,
-                );
+            let client_guard = self.client.read().await;
+            let client = client_guard
+                .as_ref()
+                .ok_or(HoneycombExporterError::Shutdown)?;
+            let mut event = Self::new_trace_event(
+                &client,
+                span.start_time,
+                span.span_context.trace_id(),
+                span.parent_span_id,
+                span.attributes,
+                &span.resource,
+            );
+            event.add_field(
+                "trace.span_id",
+                Value::String(span.span_context.span_id().to_hex()),
+            );
+            event.add_field("name", Value::String(span.name.clone()));
+            if let Ok(duration_ms) = span.end_time.duration_since(span.start_time) {
                 event.add_field(
-                    "trace.span_id",
-                    Value::String(span.span_context.span_id().to_hex()),
+                    "duration_ms",
+                    Value::Number((duration_ms.as_millis() as u64).into()),
                 );
-                event.add_field("name", Value::String(span.name.clone()));
-                if let Ok(duration_ms) = span.end_time.duration_since(span.start_time) {
-                    event.add_field(
-                        "duration_ms",
-                        Value::Number((duration_ms.as_millis() as u64).into()),
-                    );
-                }
-                event.add_field(
-                    "response.status_code",
-                    Value::Number((span.status_code.clone() as i32).into()),
-                );
-                event.add_field("status.message", Value::String(span.status_message.clone()));
-                event.add_field("span.kind", Value::String(format!("{}", span.span_kind)));
-
-                if !matches!(span.status_code, StatusCode::Unset) {
-                    event.add_field(
-                        "error",
-                        Value::Bool(!matches!(span.status_code, StatusCode::Ok)),
-                    );
-                }
-
-                event.send(&mut client).map_err(|err| {
-                    TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
-                })?;
             }
+            event.add_field(
+                "response.status_code",
+                Value::Number((span.status_code.clone() as i32).into()),
+            );
+            event.add_field("status.message", Value::String(span.status_message.clone()));
+            event.add_field("span.kind", Value::String(format!("{}", span.span_kind)));
+
+            if !matches!(span.status_code, StatusCode::Unset) {
+                event.add_field(
+                    "error",
+                    Value::Bool(!matches!(span.status_code, StatusCode::Ok)),
+                );
+            }
+
+            trace!("Sending Honeycomb event: {:#?}", event);
+            event.send(&client).await.map_err(|err| {
+                TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
+            })?;
 
             for span_event in span.message_events.into_iter() {
                 let mut event = Self::new_trace_event(
@@ -326,7 +357,8 @@ impl SpanExporter for HoneycombSpanExporter {
                     Value::String("span_event".to_string()),
                 );
 
-                event.send(&mut client).map_err(|err| {
+                trace!("Sending Honeycomb event: {:#?}", event);
+                event.send(&client).await.map_err(|err| {
                     TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
                 })?;
             }
@@ -341,19 +373,19 @@ impl SpanExporter for HoneycombSpanExporter {
 
     fn shutdown(&mut self) {
         debug!("Shutting down HoneycombSpanExporter");
-        // FIXME: ensure that all traces are flushed to Honeycomb before this function returns.
+        let mut guard = futures::executor::block_on(self.client.write());
+
+        if let Some(client) = guard.take() {
+            futures::executor::block_on(client.close())
+                .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })
+                .unwrap_or_else(|err| error!("Failed to shut down HoneycombSpanExporter: {}", err));
+        }
     }
 }
 
 impl Drop for HoneycombSpanExporter {
     fn drop(&mut self) {
-        debug!("Closing Honeycomb client");
-        self.client
-            .write()
-            .expect("Honeycomb client lock is poisoned")
-            .transmission
-            .stop()
-            .unwrap_or_else(|err| error!("Failed to close Honeycomb client: {}", err))
+        self.shutdown();
     }
 }
 
