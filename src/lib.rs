@@ -18,7 +18,7 @@
 //!     //
 //!     // NOTE: uninstalling the tracer happens when the _uninstall variable is dropped. Assigning
 //!     // it to _ will immediately drop it and uninstall the tracer!
-//!     let (tracer, _uninstall) = opentelemetry_honeycomb::new_pipeline(
+//!     let (_flusher, tracer, _uninstall) = opentelemetry_honeycomb::new_pipeline(
 //!         HoneycombApiKey::new(
 //!             std::env::var("HONEYCOMB_API_KEY")
 //!                 .expect("Missing or invalid environment variable HONEYCOMB_API_KEY")
