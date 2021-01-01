@@ -42,9 +42,9 @@ use hazy::OpaqueDebug;
 use libhoney::transmission::Transmission;
 use libhoney::{Client, Event, FieldHolder, Value};
 use log::{debug, error, trace, warn};
-use opentelemetry::exporter::trace::{ExportResult, SpanData, SpanExporter};
-use opentelemetry::exporter::ExportError;
 use opentelemetry::global::TracerProviderGuard;
+use opentelemetry::sdk::export::trace::{ExportResult, SpanData, SpanExporter};
+use opentelemetry::sdk::export::ExportError;
 use opentelemetry::sdk::Resource;
 use opentelemetry::trace::{SpanId, StatusCode, TraceError, TraceId, TracerProvider};
 use opentelemetry::{Array, KeyValue};
@@ -319,7 +319,7 @@ impl SpanExporter for HoneycombSpanExporter {
             }
             event.add_field(
                 "response.status_code",
-                Value::Number((span.status_code.clone() as i32).into()),
+                Value::Number((span.status_code as i32).into()),
             );
             event.add_field("status.message", Value::String(span.status_message.clone()));
             event.add_field("span.kind", Value::String(format!("{}", span.span_kind)));

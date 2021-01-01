@@ -14,12 +14,9 @@ chrono = "0.4"
 derivative = "2.1"
 futures = "0.3"
 hazy = "0.1"
-# Until the next libhoney release, pin to GitHub to include rustls support:
-#   https://github.com/nlopes/libhoney-rust/commit/baae1a2231f1941c5f8c1dc484e7d6db07e71803
+# Include unmerged changes to support flushing and various async improvements.
 libhoney-rust = { git = "https://github.com/ramosbugs/libhoney-rust", rev = "ec2d64317807fd48a86eca25c4a895f83ca18b22" }
 log = "0.4"
-# Until the next opentelemetry-rust release, use new error handling added in
-# https://github.com/open-telemetry/opentelemetry-rust/pull/371
-opentelemetry = { git = "https://github.com/open-telemetry/opentelemetry-rust", rev = "bd17c16836b734be70dd1ab990f1825c74b11a06" }
+opentelemetry = "0.11"
 serde_json = "1.0"
 thiserror = "1.0"
