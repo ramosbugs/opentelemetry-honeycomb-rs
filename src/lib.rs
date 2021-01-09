@@ -371,15 +371,40 @@ impl SpanExporter for HoneycombSpanExporter {
         Ok(())
     }
 
+    /// Current limitation: must be called from a Tokio async context.
     fn shutdown(&mut self) {
         debug!("Shutting down HoneycombSpanExporter");
-        let mut guard = futures::executor::block_on(self.client.write());
+        // Inspired by https://github.com/neonphog/tokio_safe_block_on/blob/074d40929ccab649b0dcc83a4ebdbdcb70b317fb/src/lib.rs#L72
 
-        if let Some(client) = guard.take() {
-            futures::executor::block_on(client.close())
-                .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })
-                .unwrap_or_else(|err| error!("Failed to shut down HoneycombSpanExporter: {}", err));
-        }
+        let client = self.client.clone();
+        // Move the current thread to the background so that we don't block the executor.
+        tokio::task::block_in_place(move || {
+            // Wait for the future to complete.
+            async_std::task::block_on(async move {
+                // Use a task for the actual implementation so that any recursive block_in_place
+                // calls will succeed.
+                tokio::task::spawn(async move {
+                    let mut guard = client.write().await;
+
+                    if let Some(client) = guard.take() {
+                        client
+                            .close()
+                            .await
+                            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })
+                            .unwrap_or_else(|err| {
+                                error!("Failed to shut down HoneycombSpanExporter: {}", err)
+                            });
+                    }
+                })
+                .await
+                .unwrap_or_else(|err| {
+                    error!(
+                        "Failed to spawn shutdown task for HoneycombSpanExporter: {}",
+                        err
+                    )
+                })
+            })
+        });
     }
 }
 
