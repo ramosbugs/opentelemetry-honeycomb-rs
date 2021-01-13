@@ -378,22 +378,19 @@ impl SpanExporter for HoneycombSpanExporter {
 
         let client = self.client.clone();
         // Move the current thread to the background so that we don't block the executor.
-        tokio::task::block_in_place(move || {
+        let _transmission = tokio::task::block_in_place(move || {
             // Wait for the future to complete.
             async_std::task::block_on(async move {
                 // Use a task for the actual implementation so that any recursive block_in_place
                 // calls will succeed.
                 tokio::task::spawn(async move {
                     let mut guard = client.write().await;
-
                     if let Some(client) = guard.take() {
-                        client
-                            .close()
-                            .await
-                            .map_err(|err| -> Box<dyn std::error::Error> { Box::new(err) })
-                            .unwrap_or_else(|err| {
-                                error!("Failed to shut down HoneycombSpanExporter: {}", err)
-                            });
+                        client.close().await.map(Some).map_err(
+                            |err| -> Box<dyn std::error::Error + Send + Sync> { Box::new(err) },
+                        )
+                    } else {
+                        Ok(None)
                     }
                 })
                 .await
@@ -401,8 +398,13 @@ impl SpanExporter for HoneycombSpanExporter {
                     error!(
                         "Failed to spawn shutdown task for HoneycombSpanExporter: {}",
                         err
-                    )
+                    );
+                    Ok(None)
                 })
+                .unwrap_or_else(|err| {
+                    error!("Failed to shut down HoneycombSpanExporter: {}", err);
+                    None
+                });
             })
         });
     }
