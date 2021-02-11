@@ -401,10 +401,9 @@ impl SpanExporter for HoneycombSpanExporter {
 
         let client = self.client.clone();
         // Move the current thread to the background so that we don't block the executor.
-        let _transmission = tokio::task::block_in_place(move || {
+        tokio::task::block_in_place(move || {
             // Wait for the future to complete.
-            // FIXME: this mixes runtimes...
-            async_std::task::block_on(async move {
+            futures::executor::block_on(async move {
                 let mut guard = client.write().await;
                 if let Some(client) = guard.take() {
                     client.close().await.unwrap_or_else(|err| {
