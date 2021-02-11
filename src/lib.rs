@@ -10,10 +10,19 @@
 //!
 //! ### Example
 //! ```rust,no_run
+//! use async_executors::TokioTpBuilder;
 //! use opentelemetry::trace::Tracer;
 //! use opentelemetry_honeycomb::HoneycombApiKey;
 //!
+//! use std::sync::Arc;
+//!
 //! fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+//!     let mut builder = TokioTpBuilder::new();
+//!     builder
+//!       .tokio_builder()
+//!       .enable_io();
+//!     let executor = Arc::new(builder.build().expect("Failed to build Tokio executor"));
+//!
 //!     // Create a new instrumentation pipeline.
 //!     //
 //!     // NOTE: uninstalling the tracer happens when the _uninstall variable is dropped. Assigning
@@ -25,7 +34,8 @@
 //!         ),
 //!         std::env::var("HONEYCOMB_DATASET")
 //!             .expect("Missing or invalid environment variable HONEYCOMB_DATASET"),
-//!     ).install();
+//!         executor,
+//!     ).install().expect("Failed to install OpenTelemetry pipeline");
 //!
 //!     tracer.in_span("doing_work", |cx| {
 //!         // Traced app logic here...
@@ -55,6 +65,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Produced by libhoney:
 pub use libhoney::Error as HoneycombError;
+pub use libhoney::FutureExecutor;
 
 /// Honeycomb API key.
 ///
@@ -77,10 +88,15 @@ impl HoneycombApiKey {
 }
 
 /// Create a new exporter pipeline builder.
-pub fn new_pipeline(api_key: HoneycombApiKey, dataset: String) -> HoneycombPipelineBuilder {
+pub fn new_pipeline(
+    api_key: HoneycombApiKey,
+    dataset: String,
+    executor: FutureExecutor,
+) -> HoneycombPipelineBuilder {
     HoneycombPipelineBuilder {
         api_key,
         dataset,
+        executor,
         trace_config: None,
         transmission_options: libhoney::transmission::Options {
             user_agent_addition: Some(format!(
@@ -94,10 +110,13 @@ pub fn new_pipeline(api_key: HoneycombApiKey, dataset: String) -> HoneycombPipel
 }
 
 /// Pipeline builder
-#[derive(Debug)]
+#[derive(Derivative)]
+#[derivative(Debug)]
 pub struct HoneycombPipelineBuilder {
     api_key: HoneycombApiKey,
     dataset: String,
+    #[derivative(Debug = "ignore")]
+    executor: FutureExecutor,
     trace_config: Option<opentelemetry::sdk::trace::Config>,
     transmission_options: libhoney::transmission::Options,
 }
@@ -129,19 +148,23 @@ impl HoneycombPipelineBuilder {
     /// Install the Honeycomb exporter pipeline with the recommended defaults.
     pub fn install(
         mut self,
-    ) -> (
-        HoneycombFlusher,
-        opentelemetry::sdk::trace::Tracer,
-        Uninstall,
-    ) {
+    ) -> Result<
+        (
+            HoneycombFlusher,
+            opentelemetry::sdk::trace::Tracer,
+            Uninstall,
+        ),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let client = Arc::new(RwLock::new(Some(libhoney::init(libhoney::Config {
+            executor: self.executor,
             options: libhoney::client::Options {
                 api_key: self.api_key.into_inner(),
                 dataset: self.dataset,
                 ..Default::default()
             },
             transmission_options: self.transmission_options,
-        }))));
+        })?)));
 
         let exporter = HoneycombSpanExporter {
             client: client.clone(),
@@ -161,11 +184,11 @@ impl HoneycombPipelineBuilder {
         );
         let provider_guard = opentelemetry::global::set_tracer_provider(provider);
 
-        (
+        Ok((
             HoneycombFlusher { client },
             tracer,
             Uninstall(provider_guard),
-        )
+        ))
     }
 }
 
@@ -380,31 +403,14 @@ impl SpanExporter for HoneycombSpanExporter {
         // Move the current thread to the background so that we don't block the executor.
         let _transmission = tokio::task::block_in_place(move || {
             // Wait for the future to complete.
+            // FIXME: this mixes runtimes...
             async_std::task::block_on(async move {
-                // Use a task for the actual implementation so that any recursive block_in_place
-                // calls will succeed.
-                tokio::task::spawn(async move {
-                    let mut guard = client.write().await;
-                    if let Some(client) = guard.take() {
-                        client.close().await.map(Some).map_err(
-                            |err| -> Box<dyn std::error::Error + Send + Sync> { Box::new(err) },
-                        )
-                    } else {
-                        Ok(None)
-                    }
-                })
-                .await
-                .unwrap_or_else(|err| {
-                    error!(
-                        "Failed to spawn shutdown task for HoneycombSpanExporter: {}",
-                        err
-                    );
-                    Ok(None)
-                })
-                .unwrap_or_else(|err| {
-                    error!("Failed to shut down HoneycombSpanExporter: {}", err);
-                    None
-                });
+                let mut guard = client.write().await;
+                if let Some(client) = guard.take() {
+                    client.close().await.unwrap_or_else(|err| {
+                        error!("Failed to shut down HoneycombSpanExporter: {}", err);
+                    });
+                }
             })
         });
     }
