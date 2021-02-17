@@ -19,8 +19,8 @@
 //! fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
 //!     let mut builder = TokioTpBuilder::new();
 //!     builder
-//!       .tokio_builder()
-//!       .enable_io();
+//!         .tokio_builder()
+//!         .enable_io();
 //!     let executor = Arc::new(builder.build().expect("Failed to build Tokio executor"));
 //!
 //!     // Create a new instrumentation pipeline.
@@ -34,7 +34,8 @@
 //!         ),
 //!         std::env::var("HONEYCOMB_DATASET")
 //!             .expect("Missing or invalid environment variable HONEYCOMB_DATASET"),
-//!         executor,
+//!         executor.clone(),
+//!         move |fut| executor.block_on(fut),
 //!     ).install().expect("Failed to install OpenTelemetry pipeline");
 //!
 //!     tracer.in_span("doing_work", |cx| {
@@ -48,6 +49,7 @@ use async_std::sync::RwLock;
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use derivative::Derivative;
+use futures::future::BoxFuture;
 use hazy::OpaqueDebug;
 use libhoney::transmission::Transmission;
 use libhoney::{Client, Event, FieldHolder, Value};
@@ -88,13 +90,18 @@ impl HoneycombApiKey {
 }
 
 /// Create a new exporter pipeline builder.
-pub fn new_pipeline(
+pub fn new_pipeline<B>(
     api_key: HoneycombApiKey,
     dataset: String,
     executor: FutureExecutor,
-) -> HoneycombPipelineBuilder {
+    block_on: B,
+) -> HoneycombPipelineBuilder
+where
+    B: Fn(BoxFuture<()>) + Send + Sync + 'static,
+{
     HoneycombPipelineBuilder {
         api_key,
+        block_on: Arc::new(block_on),
         dataset,
         executor,
         trace_config: None,
@@ -114,6 +121,8 @@ pub fn new_pipeline(
 #[derivative(Debug)]
 pub struct HoneycombPipelineBuilder {
     api_key: HoneycombApiKey,
+    #[derivative(Debug = "ignore")]
+    block_on: Arc<dyn Fn(BoxFuture<()>) + Send + Sync>,
     dataset: String,
     #[derivative(Debug = "ignore")]
     executor: FutureExecutor,
@@ -167,6 +176,7 @@ impl HoneycombPipelineBuilder {
         })?)));
 
         let exporter = HoneycombSpanExporter {
+            block_on: self.block_on,
             client: client.clone(),
         };
 
@@ -268,6 +278,8 @@ fn otel_value_to_serde_json(value: opentelemetry::Value) -> Value {
 struct HoneycombSpanExporter {
     #[derivative(Debug = "ignore")]
     client: Arc<RwLock<Option<Client<Transmission>>>>,
+    #[derivative(Debug = "ignore")]
+    block_on: Arc<dyn Fn(BoxFuture<()>) + Send + Sync>,
 }
 impl HoneycombSpanExporter {
     fn new_trace_event<I>(
@@ -394,24 +406,21 @@ impl SpanExporter for HoneycombSpanExporter {
         Ok(())
     }
 
-    /// Current limitation: must be called from a Tokio async context.
+    /// Shuts down the exporter.
+    ///
+    /// This function will panic if called from within an async context.
     fn shutdown(&mut self) {
         debug!("Shutting down HoneycombSpanExporter");
-        // Inspired by https://github.com/neonphog/tokio_safe_block_on/blob/074d40929ccab649b0dcc83a4ebdbdcb70b317fb/src/lib.rs#L72
 
         let client = self.client.clone();
-        // Move the current thread to the background so that we don't block the executor.
-        tokio::task::block_in_place(move || {
-            // Wait for the future to complete.
-            futures::executor::block_on(async move {
-                let mut guard = client.write().await;
-                if let Some(client) = guard.take() {
-                    client.close().await.unwrap_or_else(|err| {
-                        error!("Failed to shut down HoneycombSpanExporter: {}", err);
-                    });
-                }
-            })
-        });
+        (self.block_on)(Box::pin(async move {
+            let mut guard = client.write().await;
+            if let Some(client) = guard.take() {
+                client.close().await.unwrap_or_else(|err| {
+                    error!("Failed to shut down HoneycombSpanExporter: {}", err);
+                });
+            }
+        }));
     }
 }
 
