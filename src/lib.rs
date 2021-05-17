@@ -57,12 +57,13 @@ use log::{debug, error, trace, warn};
 use opentelemetry::global::TracerProviderGuard;
 use opentelemetry::sdk::export::trace::{ExportResult, SpanData, SpanExporter};
 use opentelemetry::sdk::export::ExportError;
+use opentelemetry::sdk::trace::{Span, SpanProcessor};
 use opentelemetry::sdk::Resource;
-use opentelemetry::trace::{SpanId, StatusCode, TraceError, TraceId, TracerProvider};
-use opentelemetry::{Array, KeyValue};
+use opentelemetry::trace::{SpanId, StatusCode, TraceError, TraceId, TraceResult, TracerProvider};
+use opentelemetry::{Array, Context, KeyValue};
 use thiserror::Error;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Produced by libhoney:
@@ -113,6 +114,7 @@ where
             )),
             ..Default::default()
         },
+        on_span_start: None,
     }
 }
 
@@ -128,6 +130,8 @@ pub struct HoneycombPipelineBuilder {
     executor: FutureExecutor,
     trace_config: Option<opentelemetry::sdk::trace::Config>,
     transmission_options: libhoney::transmission::Options,
+    #[derivative(Debug = "ignore")]
+    on_span_start: Option<Arc<dyn Fn(&Span, &Context) + Send + Sync>>,
 }
 impl HoneycombPipelineBuilder {
     /// Assign the SDK trace configuration.
@@ -151,6 +155,17 @@ impl HoneycombPipelineBuilder {
     /// Specifies how often to send batches to Honeycomb.
     pub fn with_batch_timeout(mut self, batch_timeout: Duration) -> Self {
         self.transmission_options.batch_timeout = batch_timeout;
+        self
+    }
+
+    /// Sets an optional function to be run every time a span starts.
+    ///
+    /// This allows manipulation of the span based on the current `Context`.
+    pub fn with_on_span_start(
+        mut self,
+        on_span_start: Arc<dyn Fn(&Span, &Context) + Send + Sync>,
+    ) -> Self {
+        self.on_span_start = Some(on_span_start);
         self
     }
 
@@ -180,10 +195,11 @@ impl HoneycombPipelineBuilder {
             client: client.clone(),
         };
 
-        // Libhoney implements its own batching, so we just use the simple exporter here instead of
-        // double-batching (which would require double-flushing, etc.).
-        let mut provider_builder =
-            opentelemetry::sdk::trace::TracerProvider::builder().with_simple_exporter(exporter);
+        let mut provider_builder = opentelemetry::sdk::trace::TracerProvider::builder()
+            .with_span_processor(HoneycombSpanProcessor {
+                exporter: Mutex::new(exporter),
+                on_span_start: self.on_span_start,
+            });
         if let Some(config) = self.trace_config.take() {
             provider_builder = provider_builder.with_config(config);
         }
@@ -269,6 +285,51 @@ fn otel_value_to_serde_json(value: opentelemetry::Value) -> Value {
                 .collect(),
         ),
         opentelemetry::Value::String(val) => Value::String(val.into_owned()),
+    }
+}
+
+#[derive(Derivative)]
+#[derivative(Debug)]
+struct HoneycombSpanProcessor {
+    #[derivative(Debug = "ignore")]
+    exporter: Mutex<HoneycombSpanExporter>,
+    #[derivative(Debug = "ignore")]
+    on_span_start: Option<Arc<dyn Fn(&Span, &Context) + Send + Sync>>,
+}
+impl SpanProcessor for HoneycombSpanProcessor {
+    fn on_start(&self, span: &Span, cx: &Context) {
+        if let Some(ref on_span_start) = self.on_span_start {
+            (on_span_start)(span, cx)
+        }
+    }
+
+    fn on_end(&self, span: SpanData) {
+        if let Ok(mut exporter) = self.exporter.lock() {
+            // Libhoney implements its own batching, so we just export the span immediately instead
+            // of double-batching (which would require double-flushing, etc.).
+            futures::executor::block_on(exporter.export(vec![span]))
+                .unwrap_or_else(opentelemetry::global::handle_error);
+        } else {
+            opentelemetry::global::handle_error(TraceError::from(
+                "HoneycombSpanProcessor's lock has been poisoned",
+            ));
+        }
+    }
+
+    fn force_flush(&self) -> TraceResult<()> {
+        // This processor does no batching, so nothing to flush.
+        Ok(())
+    }
+
+    fn shutdown(&mut self) -> TraceResult<()> {
+        if let Ok(mut exporter) = self.exporter.lock() {
+            exporter.shutdown();
+            Ok(())
+        } else {
+            Err(TraceError::Other(
+                "HoneycombSpanProcessor's lock has been poisoned".into(),
+            ))
+        }
     }
 }
 
