@@ -23,4 +23,4 @@ thiserror = "1.0"
 tokio = { version = "1.0", features = ["rt"] }
 
 [dev-dependencies]
-async_executors = { version = "0.4", features = ["tokio_tp"] }
+async_executors = { git = "https://github.com/najamelan/async_executors", rev = "ff861e6ba97a7490ea324a614cefbeca540127fd", features = ["tokio_tp"]}
