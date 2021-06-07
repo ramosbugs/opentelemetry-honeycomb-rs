@@ -361,18 +361,15 @@ impl HoneycombSpanExporter {
             event.add_field("trace.parent_id", Value::String(parent_id.to_hex()));
         }
 
-        resource
-            .as_ref()
-            .filter(|resource| !resource.is_empty())
-            .map(|resource| {
-                for (k, v) in resource
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .chain(attributes.into_iter())
-                {
-                    event.add_field(k.as_str(), otel_value_to_serde_json(v.clone()))
-                }
-            });
+        if let Some(resource) = resource.as_ref().filter(|resource| !resource.is_empty()) {
+            for (k, v) in resource
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .chain(attributes.into_iter())
+            {
+                event.add_field(k.as_str(), otel_value_to_serde_json(v.clone()))
+            }
+        };
 
         event
     }
