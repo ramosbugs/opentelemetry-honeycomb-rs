@@ -10,27 +10,35 @@
 ## Getting Started
 
 ```rust
+use async_executors::TokioTpBuilder;
 use opentelemetry::trace::Tracer;
+use opentelemetry::global::shutdown_tracer_provider;
 use opentelemetry_honeycomb::HoneycombApiKey;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+  let mut builder = TokioTpBuilder::new();
+  builder
+      .tokio_builder()
+      .enable_io();
+  let executor = Arc::new(builder.build().expect("Failed to build Tokio executor"));
+
     // Create a new instrumentation pipeline.
-    //
-    // NOTE: uninstalling the tracer happens when the _uninstall variable is dropped. Assigning
-    // it to _ will immediately drop it and uninstall the tracer!
-    let (tracer, _uninstall) = opentelemetry_honeycomb::new_pipeline(
+    let (_flusher, tracer) = opentelemetry_honeycomb::new_pipeline(
         HoneycombApiKey::new(
             std::env::var("HONEYCOMB_API_KEY")
                 .expect("Missing or invalid environment variable HONEYCOMB_API_KEY")
         ),
         std::env::var("HONEYCOMB_DATASET")
             .expect("Missing or invalid environment variable HONEYCOMB_DATASET"),
+        executor.clone(),
+        move |fut| executor.block_on(fut),
     ).install();
 
     tracer.in_span("doing_work", |cx| {
         // Traced app logic here...
     });
 
+    shutdown_tracer_provider();
     Ok(())
 }
 ```

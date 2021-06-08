@@ -12,6 +12,7 @@
 //! ```rust,no_run
 //! use async_executors::TokioTpBuilder;
 //! use opentelemetry::trace::Tracer;
+//! use opentelemetry::global::shutdown_tracer_provider;
 //! use opentelemetry_honeycomb::HoneycombApiKey;
 //!
 //! use std::sync::Arc;
@@ -24,10 +25,7 @@
 //!     let executor = Arc::new(builder.build().expect("Failed to build Tokio executor"));
 //!
 //!     // Create a new instrumentation pipeline.
-//!     //
-//!     // NOTE: uninstalling the tracer happens when the _uninstall variable is dropped. Assigning
-//!     // it to _ will immediately drop it and uninstall the tracer!
-//!     let (_flusher, tracer, _uninstall) = opentelemetry_honeycomb::new_pipeline(
+//!     let (_flusher, tracer) = opentelemetry_honeycomb::new_pipeline(
 //!         HoneycombApiKey::new(
 //!             std::env::var("HONEYCOMB_API_KEY")
 //!                 .expect("Missing or invalid environment variable HONEYCOMB_API_KEY")
@@ -42,6 +40,7 @@
 //!         // Traced app logic here...
 //!     });
 //!
+//!     shutdown_tracer_provider();
 //!     Ok(())
 //! }
 //! ```
@@ -54,7 +53,6 @@ use hazy::OpaqueDebug;
 use libhoney::transmission::Transmission;
 use libhoney::{Client, Event, FieldHolder, Value};
 use log::{debug, error, trace, warn};
-use opentelemetry::global::TracerProviderGuard;
 use opentelemetry::sdk::export::trace::{ExportResult, SpanData, SpanExporter};
 use opentelemetry::sdk::export::ExportError;
 use opentelemetry::sdk::trace::{Span, SpanProcessor};
@@ -173,11 +171,7 @@ impl HoneycombPipelineBuilder {
     pub fn install(
         mut self,
     ) -> Result<
-        (
-            HoneycombFlusher,
-            opentelemetry::sdk::trace::Tracer,
-            Uninstall,
-        ),
+        (HoneycombFlusher, opentelemetry::sdk::trace::Tracer),
         Box<dyn std::error::Error + Send + Sync>,
     > {
         let client = Arc::new(RwLock::new(Some(libhoney::init(libhoney::Config {
@@ -208,13 +202,9 @@ impl HoneycombPipelineBuilder {
             "opentelemetry-honeycomb-rs",
             Some(env!("CARGO_PKG_VERSION")),
         );
-        let provider_guard = opentelemetry::global::set_tracer_provider(provider);
+        let _ = opentelemetry::global::set_tracer_provider(provider);
 
-        Ok((
-            HoneycombFlusher { client },
-            tracer,
-            Uninstall(provider_guard),
-        ))
+        Ok((HoneycombFlusher { client }, tracer))
     }
 }
 
@@ -349,7 +339,7 @@ impl HoneycombSpanExporter {
         trace_id: TraceId,
         parent_id: SpanId,
         attributes: I,
-        resource: &Resource,
+        resource: &Option<Arc<Resource>>,
     ) -> Event
     where
         I: IntoIterator<Item = (opentelemetry::Key, opentelemetry::Value)>,
@@ -373,13 +363,15 @@ impl HoneycombSpanExporter {
             event.add_field("trace.parent_id", Value::String(parent_id.to_hex()));
         }
 
-        for (attr_name, attr_value) in resource
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .chain(attributes.into_iter())
-        {
-            event.add_field(attr_name.as_str(), otel_value_to_serde_json(attr_value))
-        }
+        if let Some(resource) = resource.as_ref().filter(|resource| !resource.is_empty()) {
+            for (k, v) in resource
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .chain(attributes.into_iter())
+            {
+                event.add_field(k.as_str(), otel_value_to_serde_json(v.clone()))
+            }
+        };
 
         event
     }
@@ -406,7 +398,7 @@ impl SpanExporter for HoneycombSpanExporter {
                 "trace.span_id",
                 Value::String(span.span_context.span_id().to_hex()),
             );
-            event.add_field("name", Value::String(span.name.clone()));
+            event.add_field("name", Value::String(span.name.to_string()));
             if let Ok(duration_ms) = span.end_time.duration_since(span.start_time) {
                 event.add_field(
                     "duration_ms",
@@ -417,7 +409,10 @@ impl SpanExporter for HoneycombSpanExporter {
                 "response.status_code",
                 Value::Number((span.status_code as i32).into()),
             );
-            event.add_field("status.message", Value::String(span.status_message.clone()));
+            event.add_field(
+                "status.message",
+                Value::String(span.status_message.to_string()),
+            );
             event.add_field("span.kind", Value::String(format!("{}", span.span_kind)));
 
             if !matches!(span.status_code, StatusCode::Unset) {
@@ -432,7 +427,7 @@ impl SpanExporter for HoneycombSpanExporter {
                 TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
             })?;
 
-            for span_event in span.message_events.into_iter() {
+            for span_event in span.events.into_iter() {
                 let mut event = Self::new_trace_event(
                     &client,
                     span_event.timestamp,
@@ -447,7 +442,7 @@ impl SpanExporter for HoneycombSpanExporter {
                     &span.resource,
                 );
                 event.add_field("duration_ms", Value::Number(0.into()));
-                event.add_field("name", Value::String(span_event.name));
+                event.add_field("name", Value::String(span_event.name.to_string()));
                 event.add_field(
                     "meta.annotation_type",
                     Value::String("span_event".to_string()),
@@ -490,7 +485,3 @@ impl Drop for HoneycombSpanExporter {
         self.shutdown();
     }
 }
-
-/// Uninstalls the Honeycomb pipeline on drop.
-#[derive(Debug)]
-pub struct Uninstall(TracerProviderGuard);
