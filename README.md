@@ -10,7 +10,9 @@
 ## Getting Started
 
 ```rust
+use async_executors::TokioTpBuilder;
 use opentelemetry::trace::Tracer;
+use opentelemetry::global::shutdown_tracer_provider;
 use opentelemetry_honeycomb::HoneycombApiKey;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -36,6 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         // Traced app logic here...
     });
 
+    shutdown_tracer_provider();
     Ok(())
 }
 ```

@@ -12,6 +12,7 @@
 //! ```rust,no_run
 //! use async_executors::TokioTpBuilder;
 //! use opentelemetry::trace::Tracer;
+//! use opentelemetry::global::shutdown_tracer_provider;
 //! use opentelemetry_honeycomb::HoneycombApiKey;
 //!
 //! use std::sync::Arc;
@@ -39,6 +40,7 @@
 //!         // Traced app logic here...
 //!     });
 //!
+//!     shutdown_tracer_provider();
 //!     Ok(())
 //! }
 //! ```
