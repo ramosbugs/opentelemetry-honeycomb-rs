@@ -130,7 +130,7 @@ pub struct HoneycombPipelineBuilder {
     trace_config: Option<opentelemetry::sdk::trace::Config>,
     transmission_options: libhoney::transmission::Options,
     #[derivative(Debug = "ignore")]
-    on_span_start: Option<Arc<dyn Fn(&Span, &Context) + Send + Sync>>,
+    on_span_start: Option<Arc<dyn Fn(&mut Span, &Context) + Send + Sync>>,
 }
 impl HoneycombPipelineBuilder {
     /// Assign the SDK trace configuration.
@@ -162,7 +162,7 @@ impl HoneycombPipelineBuilder {
     /// This allows manipulation of the span based on the current `Context`.
     pub fn with_on_span_start(
         mut self,
-        on_span_start: Arc<dyn Fn(&Span, &Context) + Send + Sync>,
+        on_span_start: Arc<dyn Fn(&mut Span, &Context) + Send + Sync>,
     ) -> Self {
         self.on_span_start = Some(on_span_start);
         self
@@ -199,7 +199,7 @@ impl HoneycombPipelineBuilder {
             provider_builder = provider_builder.with_config(config);
         }
         let provider = provider_builder.build();
-        let tracer = provider.get_tracer(
+        let tracer = provider.tracer(
             "opentelemetry-honeycomb-rs",
             Some(env!("CARGO_PKG_VERSION")),
         );
@@ -285,10 +285,10 @@ struct HoneycombSpanProcessor {
     #[derivative(Debug = "ignore")]
     exporter: Mutex<HoneycombSpanExporter>,
     #[derivative(Debug = "ignore")]
-    on_span_start: Option<Arc<dyn Fn(&Span, &Context) + Send + Sync>>,
+    on_span_start: Option<Arc<dyn Fn(&mut Span, &Context) + Send + Sync>>,
 }
 impl SpanProcessor for HoneycombSpanProcessor {
-    fn on_start(&self, span: &Span, cx: &Context) {
+    fn on_start(&self, span: &mut Span, cx: &Context) {
         if let Some(ref on_span_start) = self.on_span_start {
             (on_span_start)(span, cx)
         }

@@ -24,3 +24,6 @@ tokio = { version = "1.0", features = ["rt"] }
 
 [dev-dependencies]
 async_executors = { version = "0.4", features = ["tokio_tp"] }
+
+[patch.crates-io]
+opentelemetry = { git = "https://github.com/ramosbugs/opentelemetry-rust", rev = "d9f2ae5381f3bbf5df929f33c34a8cd656948751" }
