@@ -52,13 +52,14 @@ use futures::future::BoxFuture;
 use hazy::OpaqueDebug;
 use libhoney::transmission::Transmission;
 use libhoney::{Client, Event, FieldHolder, Value};
-use log::{debug, error, trace, warn};
+use log::{debug, error, trace};
 use opentelemetry::sdk::export::trace::{ExportResult, SpanData, SpanExporter};
 use opentelemetry::sdk::export::ExportError;
 use opentelemetry::sdk::trace::{Span, SpanProcessor};
 use opentelemetry::sdk::Resource;
 use opentelemetry::trace::{SpanId, StatusCode, TraceError, TraceId, TraceResult, TracerProvider};
 use opentelemetry::{Array, Context, KeyValue};
+use serde_json::Number;
 use thiserror::Error;
 
 use std::sync::{Arc, Mutex};
@@ -454,9 +455,30 @@ impl SpanExporter for HoneycombSpanExporter {
                 })?;
             }
 
-            if !span.links.is_empty() {
-                // FIXME: support links
-                warn!("Links are not yet supported");
+            for span_link in span.links.into_iter() {
+                let mut link_event = client.new_event();
+
+                link_event.add_field(
+                    "trace.trace_id",
+                    Value::String(span.span_context.trace_id().to_hex()),
+                );
+                if span.span_context.span_id() != SpanId::invalid() {
+                    link_event.add_field(
+                        "trace.parent_id",
+                        Value::String(span.span_context.span_id().to_hex()),
+                    );
+                }
+
+                link_event.add_field(
+                    "trace.link.trace_id",
+                    Value::String(span_link.span_context().trace_id().to_hex()),
+                );
+                link_event.add_field(
+                    "trace.link.span_id",
+                    Value::String(span_link.span_context().span_id().to_hex()),
+                );
+                link_event.add_field("meta.annotation_type", Value::String("link".to_string()));
+                link_event.add_field("ref_type", Value::Number(Number::from_f64(0.).unwrap()));
             }
         }
         Ok(())
