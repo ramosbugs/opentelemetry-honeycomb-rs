@@ -423,7 +423,7 @@ impl SpanExporter for HoneycombSpanExporter {
                 );
             }
 
-            trace!("Sending Honeycomb event: {:#?}", event);
+            trace!("Sending Honeycomb span event: {:#?}", event);
             event.send(&client).await.map_err(|err| {
                 TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
             })?;
@@ -449,7 +449,7 @@ impl SpanExporter for HoneycombSpanExporter {
                     Value::String("span_event".to_string()),
                 );
 
-                trace!("Sending Honeycomb event: {:#?}", event);
+                trace!("Sending Honeycomb span event event: {:#?}", event);
                 event.send(&client).await.map_err(|err| {
                     TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
                 })?;
@@ -479,6 +479,11 @@ impl SpanExporter for HoneycombSpanExporter {
                 );
                 link_event.add_field("meta.annotation_type", Value::String("link".to_string()));
                 link_event.add_field("ref_type", Value::Number(Number::from_f64(0.).unwrap()));
+
+                trace!("Sending Honeycomb span link event: {:#?}", event);
+                link_event.send(&client).await.map_err(|err| {
+                    TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
+                })?;
             }
         }
         Ok(())
