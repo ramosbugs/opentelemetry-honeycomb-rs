@@ -388,7 +388,7 @@ impl SpanExporter for HoneycombSpanExporter {
                 .as_ref()
                 .ok_or(HoneycombExporterError::Shutdown)?;
             let mut event = Self::new_trace_event(
-                &client,
+                client,
                 span.start_time,
                 span.span_context.trace_id(),
                 span.parent_span_id,
@@ -424,13 +424,13 @@ impl SpanExporter for HoneycombSpanExporter {
             }
 
             trace!("Sending Honeycomb span event: {:#?}", event);
-            event.send(&client).await.map_err(|err| {
+            event.send(client).await.map_err(|err| {
                 TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
             })?;
 
             for span_event in span.events.into_iter() {
                 let mut event = Self::new_trace_event(
-                    &client,
+                    client,
                     span_event.timestamp,
                     span.span_context.trace_id(),
                     // The parent of the event is the current span, as opposed to the parent of the span,
@@ -450,7 +450,7 @@ impl SpanExporter for HoneycombSpanExporter {
                 );
 
                 trace!("Sending Honeycomb span event event: {:#?}", event);
-                event.send(&client).await.map_err(|err| {
+                event.send(client).await.map_err(|err| {
                     TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
                 })?;
             }
@@ -481,7 +481,7 @@ impl SpanExporter for HoneycombSpanExporter {
                 link_event.add_field("ref_type", Value::Number(Number::from_f64(0.).unwrap()));
 
                 trace!("Sending Honeycomb span link event: {:#?}", event);
-                link_event.send(&client).await.map_err(|err| {
+                link_event.send(client).await.map_err(|err| {
                     TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
                 })?;
             }
