@@ -480,6 +480,10 @@ impl SpanExporter for HoneycombSpanExporter {
                 link_event.add_field("meta.annotation_type", Value::String("link".to_string()));
                 link_event.add_field("ref_type", Value::Number(Number::from_f64(0.).unwrap()));
 
+                for KeyValue { key, value } in span_link.attributes() {
+                    link_event.add_field(key.as_str(), otel_value_to_serde_json(value.clone()))
+                }
+
                 trace!("Sending Honeycomb span link event: {:#?}", event);
                 link_event.send(client).await.map_err(|err| {
                     TraceError::ExportFailed(Box::new(HoneycombExporterError::Honeycomb(err)))
