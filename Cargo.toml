@@ -8,6 +8,7 @@ license = "MIT"
 edition = "2018"
 
 [dependencies]
+async-channel = "1.5"
 async-std = "1.9"
 async-trait = "0.1"
 chrono = "0.4"
@@ -15,7 +16,7 @@ derivative = "2.1"
 futures = "0.3"
 hazy = "0.1"
 # Include unmerged changes to support flushing and various async improvements.
-libhoney-rust = { git = "https://github.com/ramosbugs/libhoney-rust", rev = "cda6137d93c85d725a042b022e0b692ba87c00be" }
+libhoney-rust = { git = "https://github.com/ramosbugs/libhoney-rust", rev = "e71a1fa1ac4241179b4cfe93bca892df76de0de1" }
 log = "0.4"
 opentelemetry = "0.16"
 serde_json = "1.0"

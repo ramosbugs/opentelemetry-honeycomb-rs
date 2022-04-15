@@ -44,6 +44,7 @@
 //!     Ok(())
 //! }
 //! ```
+use async_channel::Receiver;
 use async_std::sync::RwLock;
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
@@ -51,7 +52,7 @@ use derivative::Derivative;
 use futures::future::BoxFuture;
 use hazy::OpaqueDebug;
 use libhoney::transmission::Transmission;
-use libhoney::{Client, Event, FieldHolder, Value};
+use libhoney::{Client, Event, FieldHolder, Response, Value};
 use log::{debug, error, trace};
 use opentelemetry::sdk::export::trace::{ExportResult, SpanData, SpanExporter};
 use opentelemetry::sdk::export::ExportError;
@@ -223,6 +224,14 @@ impl HoneycombFlusher {
             .flush()
             .await
             .map_err(HoneycombExporterError::Honeycomb)
+    }
+
+    pub async fn responses(&self) -> Result<Receiver<Response>, HoneycombExporterError> {
+        let guard = self.client.read().await;
+        guard
+            .as_ref()
+            .ok_or(HoneycombExporterError::Shutdown)
+            .map(Client::responses)
     }
 }
 
