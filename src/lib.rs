@@ -176,7 +176,7 @@ impl HoneycombPipelineBuilder {
         (HoneycombFlusher, opentelemetry::sdk::trace::Tracer),
         Box<dyn std::error::Error + Send + Sync>,
     > {
-        let client = Arc::new(RwLock::new(Some(libhoney::init(libhoney::Config {
+        let client = libhoney::init(libhoney::Config {
             executor: self.executor,
             options: libhoney::client::Options {
                 api_key: self.api_key.into_inner(),
@@ -184,11 +184,13 @@ impl HoneycombPipelineBuilder {
                 ..Default::default()
             },
             transmission_options: self.transmission_options,
-        })?)));
+        })?;
+        let client_responses = client.responses();
+        let client_lock = Arc::new(RwLock::new(Some(client)));
 
         let exporter = HoneycombSpanExporter {
             block_on: self.block_on,
-            client: client.clone(),
+            client: client_lock.clone(),
         };
 
         let mut provider_builder = opentelemetry::sdk::trace::TracerProvider::builder()
@@ -206,13 +208,20 @@ impl HoneycombPipelineBuilder {
         );
         let _ = opentelemetry::global::set_tracer_provider(provider);
 
-        Ok((HoneycombFlusher { client }, tracer))
+        Ok((
+            HoneycombFlusher {
+                client: client_lock,
+                responses: client_responses,
+            },
+            tracer,
+        ))
     }
 }
 
 #[derive(Clone)]
 pub struct HoneycombFlusher {
     client: Arc<RwLock<Option<Client<Transmission>>>>,
+    responses: Receiver<Response>,
 }
 impl HoneycombFlusher {
     pub async fn flush(&self) -> Result<(), HoneycombExporterError> {
@@ -226,12 +235,8 @@ impl HoneycombFlusher {
             .map_err(HoneycombExporterError::Honeycomb)
     }
 
-    pub async fn responses(&self) -> Result<Receiver<Response>, HoneycombExporterError> {
-        let guard = self.client.read().await;
-        guard
-            .as_ref()
-            .ok_or(HoneycombExporterError::Shutdown)
-            .map(Client::responses)
+    pub fn responses(&self) -> &Receiver<Response> {
+        &self.responses
     }
 }
 
