@@ -172,10 +172,7 @@ impl HoneycombPipelineBuilder {
     /// Install the Honeycomb exporter pipeline with the recommended defaults.
     pub fn install(
         mut self,
-    ) -> Result<
-        (HoneycombFlusher, opentelemetry::sdk::trace::Tracer),
-        Box<dyn std::error::Error + Send + Sync>,
-    > {
+    ) -> Result<(HoneycombFlusher, opentelemetry::sdk::trace::Tracer), HoneycombError> {
         let client = libhoney::init(libhoney::Config {
             executor: self.executor,
             options: libhoney::client::Options {
