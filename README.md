@@ -10,6 +10,8 @@
 ## Getting Started
 
 ```rust
+use std::sync::Arc;
+
 use async_executors::TokioTpBuilder;
 use opentelemetry::trace::Tracer;
 use opentelemetry::global::shutdown_tracer_provider;
@@ -19,6 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
   let mut builder = TokioTpBuilder::new();
   builder
       .tokio_builder()
+      .enable_time()
       .enable_io();
   let executor = Arc::new(builder.build().expect("Failed to build Tokio executor"));
 
@@ -32,7 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
             .expect("Missing or invalid environment variable HONEYCOMB_DATASET"),
         executor.clone(),
         move |fut| executor.block_on(fut),
-    ).install();
+    )
+    .install()?;
 
     tracer.in_span("doing_work", |cx| {
         // Traced app logic here...
