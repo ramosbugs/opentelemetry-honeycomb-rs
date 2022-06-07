@@ -202,9 +202,10 @@ impl HoneycombPipelineBuilder {
             provider_builder = provider_builder.with_config(config);
         }
         let provider = provider_builder.build();
-        let tracer = provider.tracer(
+        let tracer = provider.versioned_tracer(
             "opentelemetry-honeycomb-rs",
             Some(env!("CARGO_PKG_VERSION")),
+            None,
         );
         let _ = opentelemetry::global::set_tracer_provider(provider);
 
@@ -368,14 +369,14 @@ impl HoneycombSpanExporter {
             "start_time",
             Value::String(timestamp.to_rfc3339_opts(SecondsFormat::Millis, true)),
         );
-        event.add_field("trace.trace_id", Value::String(trace_id.to_hex()));
+        event.add_field("trace.trace_id", Value::String(trace_id.to_string()));
 
         // From the Honeycomb docs:
         //   "The root span for any given trace must have no field for “parentId” in its event. If
         //    all of the spans in a trace have a “parentId”, Honeycomb will not show a root span for
         //    that trace."
-        if parent_id != SpanId::invalid() {
-            event.add_field("trace.parent_id", Value::String(parent_id.to_hex()));
+        if parent_id != SpanId::INVALID {
+            event.add_field("trace.parent_id", Value::String(parent_id.to_string()));
         }
 
         if let Some(resource) = resource.as_ref().filter(|resource| !resource.is_empty()) {
@@ -411,7 +412,7 @@ impl SpanExporter for HoneycombSpanExporter {
             );
             event.add_field(
                 "trace.span_id",
-                Value::String(span.span_context.span_id().to_hex()),
+                Value::String(span.span_context.span_id().to_string()),
             );
             event.add_field("name", Value::String(span.name.to_string()));
             if let Ok(duration_ms) = span.end_time.duration_since(span.start_time) {
@@ -474,22 +475,22 @@ impl SpanExporter for HoneycombSpanExporter {
 
                 link_event.add_field(
                     "trace.trace_id",
-                    Value::String(span.span_context.trace_id().to_hex()),
+                    Value::String(span.span_context.trace_id().to_string()),
                 );
-                if span.span_context.span_id() != SpanId::invalid() {
+                if span.span_context.span_id() != SpanId::INVALID {
                     link_event.add_field(
                         "trace.parent_id",
-                        Value::String(span.span_context.span_id().to_hex()),
+                        Value::String(span.span_context.span_id().to_string()),
                     );
                 }
 
                 link_event.add_field(
                     "trace.link.trace_id",
-                    Value::String(span_link.span_context().trace_id().to_hex()),
+                    Value::String(span_link.span_context().trace_id().to_string()),
                 );
                 link_event.add_field(
                     "trace.link.span_id",
-                    Value::String(span_link.span_context().span_id().to_hex()),
+                    Value::String(span_link.span_context().span_id().to_string()),
                 );
                 link_event.add_field("meta.annotation_type", Value::String("link".to_string()));
                 link_event.add_field("ref_type", Value::Number(Number::from_f64(0.).unwrap()));
